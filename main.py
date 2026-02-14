@@ -11,28 +11,25 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
-import asyncpg
+import aiofiles
+from aiofiles import os as aios
 
 load_dotenv()
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 6935090105))
-DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Logging sozlamalari
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.DEBUG)
 
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Ma'lumotlar bazasi pooli
-db_pool = None
+# Fayl va lock
+USERS_FILE = "users.json"
+file_lock = asyncio.Lock()
 
+# APK ma'lumotlari (avvalgidek)
 APK_DATA_FILE = "apk_data.json"
 
 def load_apk_data():
@@ -50,49 +47,68 @@ class AddApkStates(StatesGroup):
     waiting_for_text = State()
     waiting_for_file = State()
 
-# ------------------- Ma'lumotlar bazasi funksiyalari -------------------
-async def init_db():
-    global db_pool
-    try:
-        db_pool = await asyncpg.create_pool(DATABASE_URL)
-        async with db_pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    user_id BIGINT PRIMARY KEY,
-                    balance INTEGER DEFAULT 0,
-                    referrer_id BIGINT,
-                    registered BOOLEAN DEFAULT FALSE,
-                    created_at TIMESTAMP DEFAULT NOW()
-                )
-            """)
-        logger.info("Database initialized successfully")
-    except Exception as e:
-        logger.error(f"Database initialization failed: {e}")
-        raise
+# ------------------- JSON fayl bilan ishlash -------------------
+async def read_users():
+    async with file_lock:
+        try:
+            async with aiofiles.open(USERS_FILE, "r") as f:
+                content = await f.read()
+                return json.loads(content) if content else {}
+        except FileNotFoundError:
+            return {}
 
-async def get_user(conn, user_id):
-    return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
+async def write_users(users):
+    async with file_lock:
+        async with aiofiles.open(USERS_FILE, "w") as f:
+            await f.write(json.dumps(users, indent=4))
 
-async def create_user(conn, user_id, referrer_id=None):
-    await conn.execute("""
-        INSERT INTO users (user_id, referrer_id)
-        VALUES ($1, $2)
-        ON CONFLICT (user_id) DO NOTHING
-    """, user_id, referrer_id)
+async def get_user(user_id):
+    users = await read_users()
+    return users.get(str(user_id))
 
-async def add_balance(conn, user_id, amount):
-    await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
+async def save_user(user_id, data):
+    users = await read_users()
+    users[str(user_id)] = data
+    await write_users(users)
 
-async def get_balance(conn, user_id):
-    row = await conn.fetchrow("SELECT balance FROM users WHERE user_id = $1", user_id)
-    return row['balance'] if row else 0
+async def update_balance(user_id, delta):
+    users = await read_users()
+    uid = str(user_id)
+    if uid not in users:
+        users[uid] = {"balance": 0, "referrer_id": None, "registered": False}
+    users[uid]["balance"] = users[uid].get("balance", 0) + delta
+    await write_users(users)
+    return users[uid]["balance"]
 
-async def is_registered(conn, user_id):
-    row = await conn.fetchrow("SELECT registered FROM users WHERE user_id = $1", user_id)
-    return row['registered'] if row else False
+async def get_balance(user_id):
+    users = await read_users()
+    uid = str(user_id)
+    return users.get(uid, {}).get("balance", 0)
 
-async def set_registered(conn, user_id):
-    await conn.execute("UPDATE users SET registered = TRUE WHERE user_id = $1", user_id)
+async def set_registered(user_id):
+    users = await read_users()
+    uid = str(user_id)
+    if uid in users:
+        users[uid]["registered"] = True
+        await write_users(users)
+
+async def is_registered(user_id):
+    users = await read_users()
+    uid = str(user_id)
+    return users.get(uid, {}).get("registered", False)
+
+async def set_referrer(user_id, referrer_id):
+    users = await read_users()
+    uid = str(user_id)
+    if uid not in users:
+        users[uid] = {"balance": 0, "referrer_id": None, "registered": False}
+    users[uid]["referrer_id"] = referrer_id
+    await write_users(users)
+
+async def get_referrer(user_id):
+    users = await read_users()
+    uid = str(user_id)
+    return users.get(uid, {}).get("referrer_id")
 
 # ------------------- Bot username olish -------------------
 bot_username = None
@@ -109,7 +125,7 @@ async def get_bot_username():
 async def start_handler(message: types.Message, command: CommandStart):
     try:
         user_id = message.from_user.id
-        args = command.args  # start parametri
+        args = command.args
         referrer_id = None
         if args and args.startswith("ref_"):
             try:
@@ -117,38 +133,38 @@ async def start_handler(message: types.Message, command: CommandStart):
             except:
                 pass
 
-        async with db_pool.acquire() as conn:
-            # Foydalanuvchi mavjudmi?
-            user = await get_user(conn, user_id)
-            if not user:
-                # Yangi foydalanuvchi
-                await create_user(conn, user_id, referrer_id)
-                await add_balance(conn, user_id, 8000)  # start bonusi
-                logger.info(f"New user {user_id} registered with referrer {referrer_id}")
+        # Foydalanuvchini tekshirish
+        user = await get_user(user_id)
+        if not user:
+            # Yangi foydalanuvchi
+            new_user = {
+                "balance": 8000,  # start bonusi
+                "referrer_id": referrer_id if referrer_id and referrer_id != user_id else None,
+                "registered": False
+            }
+            await save_user(user_id, new_user)
 
-                # Referalga 500 ball va xabar
-                if referrer_id and referrer_id != user_id:
-                    # Referal mavjudligini tekshirish
-                    ref_user = await get_user(conn, referrer_id)
-                    if ref_user:
-                        await add_balance(conn, referrer_id, 500)
-                        try:
-                            await bot.send_message(
-                                referrer_id,
-                                f"🎉 Sizning taklifingiz orqali {message.from_user.full_name} (@{message.from_user.username}) qoʻshildi!\n+500 ball hisobingizga qoʻshildi."
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to notify referrer {referrer_id}: {e}")
-            else:
-                # Eski foydalanuvchi, faqat referrer_id ni saqlaymiz (agar bo'sh bo'lsa)
-                if referrer_id and not user['referrer_id'] and referrer_id != user_id:
-                    await conn.execute("UPDATE users SET referrer_id = $1 WHERE user_id = $2", referrer_id, user_id)
+            # Referalga bonus berish
+            if referrer_id and referrer_id != user_id:
+                referrer = await get_user(referrer_id)
+                if referrer:
+                    await update_balance(referrer_id, 500)
+                    try:
+                        await bot.send_message(
+                            referrer_id,
+                            f"🎉 Sizning taklifingiz orqali {message.from_user.full_name} (@{message.from_user.username}) qoʻshildi!\n+500 ball hisobingizga qoʻshildi."
+                        )
+                    except:
+                        pass
+        else:
+            # Eski foydalanuvchi, faqat referrer_id bo'sh bo'lsa va yangi referrer kelgan bo'lsa, saqlash mumkin
+            if referrer_id and not user.get("referrer_id") and referrer_id != user_id:
+                user["referrer_id"] = referrer_id
+                await save_user(user_id, user)
 
-        # Asosiy menyu
         await show_main_menu(message)
     except Exception as e:
-        logger.error(f"Start handler error: {e}\n{traceback.format_exc()}")
-        await message.answer("❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
+        logging.error(f"Start handler error: {e}\n{traceback.format_exc()}")
 
 async def show_main_menu(message: types.Message):
     apk_data = load_apk_data()
@@ -176,12 +192,11 @@ async def show_main_menu(message: types.Message):
 async def my_balance_callback(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        async with db_pool.acquire() as conn:
-            balance = await get_balance(conn, user_id)
+        balance = await get_balance(user_id)
         await callback.message.answer(f"💰 Sizning balansingiz: *{balance} ball*", parse_mode="Markdown")
         await callback.answer()
     except Exception as e:
-        logger.error(f"my_balance error: {e}")
+        logging.error(f"my_balance error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- Ball ishlash (referal) -------------------
@@ -204,7 +219,7 @@ async def earn_points_callback(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
         await callback.answer()
     except Exception as e:
-        logger.error(f"earn_points error: {e}")
+        logging.error(f"earn_points error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- Ro'yxatdan o'tish bonusi -------------------
@@ -212,22 +227,21 @@ async def earn_points_callback(callback: types.CallbackQuery):
 async def register_bonus_callback(callback: types.CallbackQuery):
     try:
         user_id = callback.from_user.id
-        async with db_pool.acquire() as conn:
-            registered = await is_registered(conn, user_id)
-            if not registered:
-                await add_balance(conn, user_id, 20000)
-                await set_registered(conn, user_id)
-                text = (
-                    "✅ Siz roʻyxatdan oʻtish bonusini oldingiz! *+20000 ball* hisobingizga qoʻshildi.\n\n"
-                    "🔗 Endi quyidagi havola orqali winwin'da roʻyxatdan oʻting va *win_21450* promokodini kiriting:\n"
-                    "https://refpa712080.pro/L?tag=d_4543807m_64485c_&site=4543807&ad=64485"
-                )
-                await callback.message.answer(text, parse_mode="Markdown")
-            else:
-                await callback.message.answer("❌ Siz allaqachon roʻyxatdan oʻtish bonusini olgansiz.")
+        registered = await is_registered(user_id)
+        if not registered:
+            await update_balance(user_id, 20000)
+            await set_registered(user_id)
+            text = (
+                "✅ Siz roʻyxatdan oʻtish bonusini oldingiz! *+20000 ball* hisobingizga qoʻshildi.\n\n"
+                "🔗 Endi quyidagi havola orqali winwin'da roʻyxatdan oʻting va *win_21450* promokodini kiriting:\n"
+                "https://refpa712080.pro/L?tag=d_4543807m_64485c_&site=4543807&ad=64485"
+            )
+            await callback.message.answer(text, parse_mode="Markdown")
+        else:
+            await callback.message.answer("❌ Siz allaqachon roʻyxatdan oʻtish bonusini olgansiz.")
         await callback.answer()
     except Exception as e:
-        logger.error(f"register_bonus error: {e}")
+        logging.error(f"register_bonus error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- APK yuklash -------------------
@@ -243,7 +257,7 @@ async def download_apk_callback(callback: types.CallbackQuery):
         await callback.message.answer_document(document=apk_data["file_id"], caption=text)
         await callback.answer()
     except Exception as e:
-        logger.error(f"Download APK error: {e}")
+        logging.error(f"Download APK error: {e}")
 
 # ------------------- Admin buyruqlari -------------------
 @dp.message(Command("add_apk"))
@@ -255,7 +269,7 @@ async def add_apk_start(message: types.Message, state: FSMContext):
         await message.answer("✍️ APK uchun matn (taʼrif) yuboring:")
         await state.set_state(AddApkStates.waiting_for_text)
     except Exception as e:
-        logger.error(f"Add_apk start error: {e}")
+        logging.error(f"Add_apk start error: {e}")
 
 @dp.message(AddApkStates.waiting_for_text)
 async def add_apk_text(message: types.Message, state: FSMContext):
@@ -267,7 +281,7 @@ async def add_apk_text(message: types.Message, state: FSMContext):
         await message.answer("📎 Endi APK faylini yuboring.")
         await state.set_state(AddApkStates.waiting_for_file)
     except Exception as e:
-        logger.error(f"Add_apk text error: {e}")
+        logging.error(f"Add_apk text error: {e}")
 
 @dp.message(AddApkStates.waiting_for_file)
 async def add_apk_file(message: types.Message, state: FSMContext):
@@ -285,7 +299,7 @@ async def add_apk_file(message: types.Message, state: FSMContext):
         await message.answer("✅ APK muvaffaqiyatli qoʻshildi!")
         await state.clear()
     except Exception as e:
-        logger.error(f"Add_apk file error: {e}")
+        logging.error(f"Add_apk file error: {e}")
 
 @dp.message(Command("remove_apk"))
 async def remove_apk(message: types.Message):
@@ -296,7 +310,7 @@ async def remove_apk(message: types.Message):
         save_apk_data({"text": None, "file_id": None})
         await message.answer("✅ APK o'chirildi.")
     except Exception as e:
-        logger.error(f"Remove_apk error: {e}")
+        logging.error(f"Remove_apk error: {e}")
 
 @dp.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
@@ -306,7 +320,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         await state.clear()
         await message.answer("✅ Jarayon bekor qilindi.")
     except Exception as e:
-        logger.error(f"Cancel error: {e}")
+        logging.error(f"Cancel error: {e}")
 
 # ------------------- Ping test -------------------
 @dp.message(Command("ping"))
@@ -316,18 +330,20 @@ async def ping(message: types.Message):
 # ------------------- Universal callback (debug) -------------------
 @dp.callback_query()
 async def debug_callback(callback: types.CallbackQuery):
-    logger.debug(f"Unhandled callback data: {callback.data}")
+    logging.debug(f"Unhandled callback data: {callback.data}")
     await callback.answer(f"Boshqa callback: {callback.data}", show_alert=True)
 
-# ------------------- Startup / Shutdown -------------------
+# ------------------- Startup -------------------
 async def on_startup():
-    await init_db()
-    logger.info("Bot started and database initialized.")
+    # users.json mavjudligini tekshirish
+    try:
+        await aios.stat(USERS_FILE)
+    except FileNotFoundError:
+        await write_users({})
+    logging.info("Bot started with JSON storage.")
 
 async def on_shutdown():
-    if db_pool:
-        await db_pool.close()
-    logger.info("Bot stopped.")
+    logging.info("Bot stopped.")
 
 async def main():
     dp.startup.register(on_startup)
@@ -335,7 +351,4 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except (KeyboardInterrupt, SystemExit):
-        logger.info("Bot stopped manually")
+    asyncio.run(main())
