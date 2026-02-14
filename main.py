@@ -19,7 +19,12 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 6935090105))
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-logging.basicConfig(level=logging.DEBUG)
+# Logging sozlamalari
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 bot = Bot(token=TOKEN)
 storage = MemoryStorage()
@@ -48,17 +53,22 @@ class AddApkStates(StatesGroup):
 # ------------------- Ma'lumotlar bazasi funksiyalari -------------------
 async def init_db():
     global db_pool
-    db_pool = await asyncpg.create_pool(DATABASE_URL)
-    async with db_pool.acquire() as conn:
-        await conn.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                user_id BIGINT PRIMARY KEY,
-                balance INTEGER DEFAULT 0,
-                referrer_id BIGINT,
-                registered BOOLEAN DEFAULT FALSE,
-                created_at TIMESTAMP DEFAULT NOW()
-            )
-        """)
+    try:
+        db_pool = await asyncpg.create_pool(DATABASE_URL)
+        async with db_pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    user_id BIGINT PRIMARY KEY,
+                    balance INTEGER DEFAULT 0,
+                    referrer_id BIGINT,
+                    registered BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+        logger.info("Database initialized successfully")
+    except Exception as e:
+        logger.error(f"Database initialization failed: {e}")
+        raise
 
 async def get_user(conn, user_id):
     return await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
@@ -114,6 +124,7 @@ async def start_handler(message: types.Message, command: CommandStart):
                 # Yangi foydalanuvchi
                 await create_user(conn, user_id, referrer_id)
                 await add_balance(conn, user_id, 8000)  # start bonusi
+                logger.info(f"New user {user_id} registered with referrer {referrer_id}")
 
                 # Referalga 500 ball va xabar
                 if referrer_id and referrer_id != user_id:
@@ -126,18 +137,18 @@ async def start_handler(message: types.Message, command: CommandStart):
                                 referrer_id,
                                 f"🎉 Sizning taklifingiz orqali {message.from_user.full_name} (@{message.from_user.username}) qoʻshildi!\n+500 ball hisobingizga qoʻshildi."
                             )
-                        except:
-                            pass
+                        except Exception as e:
+                            logger.warning(f"Failed to notify referrer {referrer_id}: {e}")
             else:
-                # Eski foydalanuvchi, ball qo'shmaymiz, faqat referrer_id ni saqlaymiz (agar birinchi marta kelayotgan bo'lsa?)
-                # Agar referrer_id bo'lsa va userda referrer_id yo'q bo'lsa, uni saqlash mumkin, lekin ball bermaymiz
+                # Eski foydalanuvchi, faqat referrer_id ni saqlaymiz (agar bo'sh bo'lsa)
                 if referrer_id and not user['referrer_id'] and referrer_id != user_id:
                     await conn.execute("UPDATE users SET referrer_id = $1 WHERE user_id = $2", referrer_id, user_id)
 
         # Asosiy menyu
         await show_main_menu(message)
     except Exception as e:
-        logging.error(f"Start handler error: {e}\n{traceback.format_exc()}")
+        logger.error(f"Start handler error: {e}\n{traceback.format_exc()}")
+        await message.answer("❌ Xatolik yuz berdi. Iltimos, keyinroq urinib ko'ring.")
 
 async def show_main_menu(message: types.Message):
     apk_data = load_apk_data()
@@ -170,7 +181,7 @@ async def my_balance_callback(callback: types.CallbackQuery):
         await callback.message.answer(f"💰 Sizning balansingiz: *{balance} ball*", parse_mode="Markdown")
         await callback.answer()
     except Exception as e:
-        logging.error(f"my_balance error: {e}")
+        logger.error(f"my_balance error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- Ball ishlash (referal) -------------------
@@ -193,7 +204,7 @@ async def earn_points_callback(callback: types.CallbackQuery):
         await callback.message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
         await callback.answer()
     except Exception as e:
-        logging.error(f"earn_points error: {e}")
+        logger.error(f"earn_points error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- Ro'yxatdan o'tish bonusi -------------------
@@ -216,7 +227,7 @@ async def register_bonus_callback(callback: types.CallbackQuery):
                 await callback.message.answer("❌ Siz allaqachon roʻyxatdan oʻtish bonusini olgansiz.")
         await callback.answer()
     except Exception as e:
-        logging.error(f"register_bonus error: {e}")
+        logger.error(f"register_bonus error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
 # ------------------- APK yuklash -------------------
@@ -232,7 +243,7 @@ async def download_apk_callback(callback: types.CallbackQuery):
         await callback.message.answer_document(document=apk_data["file_id"], caption=text)
         await callback.answer()
     except Exception as e:
-        logging.error(f"Download APK error: {e}")
+        logger.error(f"Download APK error: {e}")
 
 # ------------------- Admin buyruqlari -------------------
 @dp.message(Command("add_apk"))
@@ -244,7 +255,7 @@ async def add_apk_start(message: types.Message, state: FSMContext):
         await message.answer("✍️ APK uchun matn (taʼrif) yuboring:")
         await state.set_state(AddApkStates.waiting_for_text)
     except Exception as e:
-        logging.error(f"Add_apk start error: {e}")
+        logger.error(f"Add_apk start error: {e}")
 
 @dp.message(AddApkStates.waiting_for_text)
 async def add_apk_text(message: types.Message, state: FSMContext):
@@ -256,7 +267,7 @@ async def add_apk_text(message: types.Message, state: FSMContext):
         await message.answer("📎 Endi APK faylini yuboring.")
         await state.set_state(AddApkStates.waiting_for_file)
     except Exception as e:
-        logging.error(f"Add_apk text error: {e}")
+        logger.error(f"Add_apk text error: {e}")
 
 @dp.message(AddApkStates.waiting_for_file)
 async def add_apk_file(message: types.Message, state: FSMContext):
@@ -274,7 +285,7 @@ async def add_apk_file(message: types.Message, state: FSMContext):
         await message.answer("✅ APK muvaffaqiyatli qoʻshildi!")
         await state.clear()
     except Exception as e:
-        logging.error(f"Add_apk file error: {e}")
+        logger.error(f"Add_apk file error: {e}")
 
 @dp.message(Command("remove_apk"))
 async def remove_apk(message: types.Message):
@@ -285,7 +296,7 @@ async def remove_apk(message: types.Message):
         save_apk_data({"text": None, "file_id": None})
         await message.answer("✅ APK o'chirildi.")
     except Exception as e:
-        logging.error(f"Remove_apk error: {e}")
+        logger.error(f"Remove_apk error: {e}")
 
 @dp.message(Command("cancel"))
 async def cancel_handler(message: types.Message, state: FSMContext):
@@ -295,7 +306,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         await state.clear()
         await message.answer("✅ Jarayon bekor qilindi.")
     except Exception as e:
-        logging.error(f"Cancel error: {e}")
+        logger.error(f"Cancel error: {e}")
 
 # ------------------- Ping test -------------------
 @dp.message(Command("ping"))
@@ -305,18 +316,18 @@ async def ping(message: types.Message):
 # ------------------- Universal callback (debug) -------------------
 @dp.callback_query()
 async def debug_callback(callback: types.CallbackQuery):
-    logging.debug(f"Unhandled callback data: {callback.data}")
+    logger.debug(f"Unhandled callback data: {callback.data}")
     await callback.answer(f"Boshqa callback: {callback.data}", show_alert=True)
 
 # ------------------- Startup / Shutdown -------------------
 async def on_startup():
     await init_db()
-    logging.info("Bot started and database initialized.")
+    logger.info("Bot started and database initialized.")
 
 async def on_shutdown():
     if db_pool:
         await db_pool.close()
-    logging.info("Bot stopped.")
+    logger.info("Bot stopped.")
 
 async def main():
     dp.startup.register(on_startup)
@@ -324,4 +335,7 @@ async def main():
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except (KeyboardInterrupt, SystemExit):
+        logger.info("Bot stopped manually")
