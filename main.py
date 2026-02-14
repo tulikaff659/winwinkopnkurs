@@ -4,12 +4,12 @@ import asyncio
 import logging
 import traceback
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandStart  # <-- CommandStart qo'shildi
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
-from aiogram.utils.keyboard import InlineKeyboardBuilder  # <-- To‘g‘ri import
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
 load_dotenv()
