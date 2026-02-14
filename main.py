@@ -29,7 +29,7 @@ dp = Dispatcher(storage=storage)
 USERS_FILE = "users.json"
 file_lock = asyncio.Lock()
 
-# APK ma'lumotlari (avvalgidek)
+# APK ma'lumotlari
 APK_DATA_FILE = "apk_data.json"
 
 def load_apk_data():
@@ -133,7 +133,6 @@ async def start_handler(message: types.Message, command: CommandStart):
             except:
                 pass
 
-        # Foydalanuvchini tekshirish
         user = await get_user(user_id)
         if not user:
             # Yangi foydalanuvchi
@@ -179,12 +178,22 @@ async def show_main_menu(message: types.Message):
         "🚀 *Omad! BMW sizniki boʻlishi mumkin!*"
     )
     builder = InlineKeyboardBuilder()
+    
+    # Birinchi qator: Mening ballarim va Ball ishlash (yonma-yon)
     builder.button(text="💰 Mening ballarim", callback_data="my_balance")
     builder.button(text="🎁 Ball ishlash", callback_data="earn_points")
-    builder.button(text="📝 Roʻyxatdan oʻtish (20000 ball)", callback_data="register_bonus")
+    builder.adjust(2)  # 2 ta tugma bir qatorda
+    
+    # Ikkinchi qator: To'liq ma'lumot va Ro'yxatdan o'tish (yonma-yon)
+    builder.button(text="📋 To'liq ma'lumot", url="https://malumot.com")
+    builder.button(text="📝 Roʻyxatdan oʻtish (20000 ball)", url="https://winwin-80363.pro/ru?tag=d_4543807m_64485c_")
+    builder.adjust(2)  # 2 ta tugma bir qatorda
+    
+    # Uchinchi qator: APK yuklash (agar mavjud bo'lsa)
     if apk_data.get("file_id"):
         builder.button(text="📲 APK yuklash", callback_data="download_apk")
-    builder.adjust(1)
+        builder.adjust(1)  # bitta tugma o'z qatorida
+    
     await message.answer(text, reply_markup=builder.as_markup(), parse_mode="Markdown")
 
 # ------------------- Mening ballarim -------------------
@@ -222,27 +231,9 @@ async def earn_points_callback(callback: types.CallbackQuery):
         logging.error(f"earn_points error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
-# ------------------- Ro'yxatdan o'tish bonusi -------------------
-@dp.callback_query(F.data == "register_bonus")
-async def register_bonus_callback(callback: types.CallbackQuery):
-    try:
-        user_id = callback.from_user.id
-        registered = await is_registered(user_id)
-        if not registered:
-            await update_balance(user_id, 20000)
-            await set_registered(user_id)
-            text = (
-                "✅ Siz roʻyxatdan oʻtish bonusini oldingiz! *+20000 ball* hisobingizga qoʻshildi.\n\n"
-                "🔗 Endi quyidagi havola orqali winwin'da roʻyxatdan oʻting va *win_21450* promokodini kiriting:\n"
-                "https://refpa712080.pro/L?tag=d_4543807m_64485c_&site=4543807&ad=64485"
-            )
-            await callback.message.answer(text, parse_mode="Markdown")
-        else:
-            await callback.message.answer("❌ Siz allaqachon roʻyxatdan oʻtish bonusini olgansiz.")
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"register_bonus error: {e}")
-        await callback.answer("Xatolik yuz berdi", show_alert=True)
+# ------------------- Ro'yxatdan o'tish bonusi (eski callback, endi tugma url bo'lgani uchun ishlatilmaydi, lekin kodda qoldirildi) -------------------
+# Ushbu handler endi ishlamaydi, chunki tugma url ga aylantirilgan. Agar xohlasangiz olib tashlashingiz mumkin.
+# Lekin callback_data "register_bonus" ga ega tugma yo'q, shuning uchun kerak emas.
 
 # ------------------- APK yuklash -------------------
 @dp.callback_query(F.data == "download_apk")
@@ -335,7 +326,6 @@ async def debug_callback(callback: types.CallbackQuery):
 
 # ------------------- Startup -------------------
 async def on_startup():
-    # users.json mavjudligini tekshirish
     try:
         await aios.stat(USERS_FILE)
     except FileNotFoundError:
