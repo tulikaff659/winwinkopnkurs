@@ -4,11 +4,10 @@ import asyncio
 import logging
 import traceback
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, CommandStart  # <-- CommandStart qo'shildi
+from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from dotenv import load_dotenv
 
@@ -49,15 +48,18 @@ async def start_handler(message: types.Message):
     try:
         apk_data = load_apk_data()
         text = (
-            "🎰 *Winwin bukmekerida konkurs!*\n\n"
-            "Konkursda gʻoliblar qatorida boʻlish uchun *win_21450* promokod orqali "
-            "winwinda roʻyxatdan oʻtish talab qilinadi. Ball toʻplab imkoniyatni oshiring!\n\n"
-            "🎁 *Sovrinlar:* bosh sovrin BMW va 100 dan ortiq sovgʻalar. "
-            "Raisboydan keyin BMVni siz yutishingiz mumkin.\n\n"
-            "Endi bloggerlar qatnashmaydi, konkurs oddiy xalq uchun."
+            "🎉 *D I Q Q A T! Winwin’da super konkurs!* 🎉\n\n"
+            "🏆 *Bosh sovrin – BMW!* 100+ qimmatbaho sovgʻalar!\n"
+            "📢 Endi bloggerlar qatnashmaydi – bu konkurs *oddiy xalq uchun*! Sizda ajoyib imkoniyat bor!\n\n"
+            "✅ *Qatnashish uchun:*\n"
+            "1. Roʻyxatdan oʻtish tugmasini bosing va *win_21450* promokodini kiriting.\n"
+            "2. Ball toʻplab, imkoniyatingizni oshiring.\n"
+            "3. Konkurs haqida batafsil maʼlumotni quyidagi tugma orqali oling.\n\n"
+            "🚀 *Omad! BMW sizniki boʻlishi mumkin!*"
         )
         builder = InlineKeyboardBuilder()
-        builder.button(text="📋 Konkurs haqida maʼlumot", callback_data="info")
+        # Endi bu tugma tashqi havola ochadi
+        builder.button(text="📋 Konkurs haqida maʼlumot", url="https://signal.com")
         builder.button(text="📝 Roʻyxatdan oʻtish", url="https://refpa712080.pro/L?tag=d_4543807m_64485c_&site=4543807&ad=64485")
         if apk_data.get("file_id"):
             builder.button(text="📲 APK yuklash", callback_data="download_apk")
@@ -66,23 +68,7 @@ async def start_handler(message: types.Message):
     except Exception as e:
         logging.error(f"Start handler error: {e}")
 
-@dp.callback_query(F.data == "info")
-async def info_callback(callback: types.CallbackQuery):
-    try:
-        text = (
-            "📌 *Konkurs tafsilotlari:*\n\n"
-            "• *Promokod:* win_21450 orqali winwin'da roʻyxatdan oʻting.\n"
-            "• Ball toʻplab, imkoniyatingizni oshiring.\n"
-            "• Bosh sovrin: *BMW* va 100+ sovgʻalar.\n"
-            "• Raisboydan keyin BMW sizniki boʻlishi mumkin.\n"
-            "• Endi bloggerlar qatnashmaydi – konkurs oddiy xalq uchun!"
-        )
-        await callback.message.answer(text, parse_mode="Markdown")
-        await callback.answer()
-    except Exception as e:
-        logging.error(f"Info callback error: {e}\n{traceback.format_exc()}")
-        await callback.answer("Xatolik yuz berdi", show_alert=True)
-
+# "APK yuklash" tugmasi uchun callback (o‘zgarishsiz)
 @dp.callback_query(F.data == "download_apk")
 async def download_apk_callback(callback: types.CallbackQuery):
     try:
@@ -97,7 +83,7 @@ async def download_apk_callback(callback: types.CallbackQuery):
     except Exception as e:
         logging.error(f"Download APK error: {e}")
 
-# Admin commands
+# Admin buyruqlari (o‘zgarishsiz)
 @dp.message(Command("add_apk"))
 async def add_apk_start(message: types.Message, state: FSMContext):
     try:
@@ -160,7 +146,7 @@ async def cancel_handler(message: types.Message, state: FSMContext):
     except Exception as e:
         logging.error(f"Cancel error: {e}")
 
-# Universal callback handler (vaqtinchalik debug uchun)
+# Universal callback handler (faqat debug uchun, istalmasa o‘chirish mumkin)
 @dp.callback_query()
 async def debug_callback(callback: types.CallbackQuery):
     logging.debug(f"Unhandled callback data: {callback.data}")
