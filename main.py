@@ -231,10 +231,6 @@ async def earn_points_callback(callback: types.CallbackQuery):
         logging.error(f"earn_points error: {e}")
         await callback.answer("Xatolik yuz berdi", show_alert=True)
 
-# ------------------- Ro'yxatdan o'tish bonusi (eski callback, endi tugma url bo'lgani uchun ishlatilmaydi, lekin kodda qoldirildi) -------------------
-# Ushbu handler endi ishlamaydi, chunki tugma url ga aylantirilgan. Agar xohlasangiz olib tashlashingiz mumkin.
-# Lekin callback_data "register_bonus" ga ega tugma yo'q, shuning uchun kerak emas.
-
 # ------------------- APK yuklash -------------------
 @dp.callback_query(F.data == "download_apk")
 async def download_apk_callback(callback: types.CallbackQuery):
@@ -312,6 +308,16 @@ async def cancel_handler(message: types.Message, state: FSMContext):
         await message.answer("✅ Jarayon bekor qilindi.")
     except Exception as e:
         logging.error(f"Cancel error: {e}")
+
+# ------------------- Foydalanuvchilar soni (YANGI BUYRUK) -------------------
+@dp.message(Command("users"))
+async def users_count(message: types.Message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Siz admin emassiz.")
+        return
+    users = await read_users()
+    count = len(users)
+    await message.answer(f"👥 Botda {count} ta foydalanuvchi bor.")
 
 # ------------------- Ping test -------------------
 @dp.message(Command("ping"))
