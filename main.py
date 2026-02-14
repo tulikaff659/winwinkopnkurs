@@ -185,7 +185,7 @@ async def show_main_menu(message: types.Message):
     builder.adjust(2)  # 2 ta tugma bir qatorda
     
     # Ikkinchi qator: To'liq ma'lumot va Ro'yxatdan o'tish (yonma-yon)
-    builder.button(text="📋 To'liq ma'lumot", url="https://malumot.com")
+    builder.button(text="📋 To'liq ma'lumot", url="https://konkursbmw.netlify.app/")
     builder.button(text="📝 Roʻyxatdan oʻtish (20000 ball)", url="https://winwin-80363.pro/ru?tag=d_4543807m_64485c_")
     builder.adjust(2)  # 2 ta tugma bir qatorda
     
